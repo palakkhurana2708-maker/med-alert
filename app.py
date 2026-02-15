@@ -1,68 +1,85 @@
 import streamlit as st
+import time
 import pandas as pd
 from datetime import datetime
 import smtplib
-from email.mime.text import MIMEText
+from email.message import EmailMessage
 
-st.set_page_config(page_title="Med-Alert Dashboard", layout="wide")
+# --- 1. PAGE CONFIG & MEMORY ---
+st.set_page_config(page_title="Med-Alerts", page_icon="🏥", layout="wide")
 
-# --- 1. EMAIL CONFIGURATION ---
-# Change these to your real details if you want real emails!
-SIMULATION_MODE = True 
-SENDER_EMAIL = "your_email@gmail.com"
-SENDER_PASSWORD = "your_app_password"
+if 'patient_records' not in st.session_state:
+    st.session_state.patient_records = []
+if 'is_loaded' not in st.session_state:
+    st.session_state.is_loaded = False
 
-# --- 2. DATABASE LOGIC ---
-if 'med_data' not in st.session_state:
-    st.session_state.med_data = pd.DataFrame({
-        "Patient": ["Sarah Jenkins", "Baby Leo"],
-        "Medicine": ["Insulin", "Polio Vaccine"],
-        "Time": ["09:00", "14:30"],
-        "Status": ["Taken", "Pending"]
-    })
+# --- 2. NOTIFICATION ENGINE ---
+def send_email(patient, med):
+    msg = EmailMessage()
+    msg.set_content(f"⏰ Med-Alert! It's time for {patient} to take {med}.")
+    msg["Subject"] = "🚨 Medication Reminder"
+    msg["From"] = st.secrets["my_email"]
+    msg["To"] = st.secrets["receiver_email"]
 
-# --- 3. THE REMINDER FUNCTION ---
-def send_alert(row):
-    subject = f"🔔 MED-ALERT: {row['Medicine']} Due!"
-    body = f"Hello, it is time for the {row['Medicine']} for {row['Patient']}."
-    
-    if SIMULATION_MODE:
-        st.toast(f"SIMULATION: Email sent for {row['Medicine']}!") # Popup in browser
-        print(f"DEBUG: Alert sent for {row['Medicine']}")
-    else:
-        # Standard Email Code
-        msg = MIMEText(body)
-        msg['Subject'] = subject
-        # ... (Email sending logic here)
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(st.secrets["my_email"], st.secrets["my_app_password"])
+            server.send_message(msg)
+        return True
+    except Exception as e:
+        st.error(f"Error: {e}")
+        return False
 
-# --- 4. HEADER & SIDEBAR ---
-st.title("🏥 Med-Alert: Smart Tracker")
+# --- 3. SPLASH SCREEN ---
+if not st.session_state.is_loaded:
+    st.markdown("<h1 style='text-align: center;'>🏥 Med-Alerts</h1>", unsafe_allow_html=True)
+    with st.spinner('Loading Dashboard...'):
+        time.sleep(2)
+    st.session_state.is_loaded = True
+    st.rerun()
+
+# --- 4. DASHBOARD & FORM ---
+st.title("👨‍⚕️ Patient Dashboard")
 
 with st.sidebar:
-    st.header("Add New Entry")
-    p_name = st.sidebar.text_input("Patient Name")
-    m_name = st.sidebar.text_input("Medication Name")
-    r_time = st.sidebar.time_input("Reminder Time", datetime.now())
-    
-    if st.sidebar.button("Add to Schedule"):
-        new_entry = pd.DataFrame({"Patient": [p_name], "Medicine": [m_name], 
-                                  "Time": [r_time.strftime("%H:%M")], "Status": ["Pending"]})
-        st.session_state.med_data = pd.concat([st.session_state.med_data, new_entry], ignore_index=True)
+    st.header("Settings")
+    if st.button("📧 Send Test Email"):
+        if send_email("Test Patient", "Test Medicine"):
+            st.success("Test email sent! Check your inbox.")
+        else:
+            st.error("Failed to send. Check your Secrets setup.")
 
-# --- 5. THE "SMART" CHECKER ---
-st.write("### Today's Schedule")
+with st.container(border=True):
+    with st.form("med_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            name = st.text_input("Patient Name")
+            med = st.text_input("Medicine Name")
+        with col2:
+            file = st.file_uploader("Upload Prescription", type=['jpg', 'png', 'pdf'])
+            med_time = st.time_input("Reminder Time")
+        
+        if st.form_submit_button("Register"):
+            if name and file:
+                new_entry = {"Name": name, "Med": med, "Time": med_time.strftime('%I:%M %p'), "Notified": False}
+                st.session_state.patient_records.append(new_entry)
+                st.success(f"Registered {name} for {med_time.strftime('%I:%M %p')}")
+            else:
+                st.error("Please fill all fields.")
 
-# This checks if the current time matches any scheduled time
-current_time = datetime.now().strftime("%H:%M")
+# --- 5. THE AUTOMATED CHECKER ---
+st.divider()
+st.subheader("📋 Active Schedule")
+current_time = datetime.now().strftime("%I:%M %p")
+st.write(f"Current Time: **{current_time}**")
 
-for index, row in st.session_state.med_data.iterrows():
-    if row['Time'] == current_time and row['Status'] == "Pending":
-        send_alert(row)
-        # Update status so it doesn't send 100 emails in the same minute
-        st.session_state.med_data.at[index, 'Status'] = "Alert Sent"
+if st.session_state.patient_records:
+    df = pd.DataFrame(st.session_state.patient_records)
+    st.table(df[["Name", "Med", "Time"]])
 
-# Display Table
-st.table(st.session_state.med_data)
-
-if st.button("Check for Reminders Now"):
-    st.rerun()
+    # CHECK IF IT'S TIME TO ALERT
+    for record in st.session_state.patient_records:
+        if record["Time"] == current_time and not record["Notified"]:
+            if send_email(record["Name"], record["Med"]):
+                st.toast(f"Alert sent for {record['Name']}!")
+                record["Notified"] = True
