@@ -1,9 +1,14 @@
 import streamlit as st
-import time
 import pandas as pd
 from datetime import datetime
+import pytz  # <--- New library for timezones
 import smtplib
 from email.message import EmailMessage
+
+# --- SETUP TIMEZONE ---
+# Replace 'Asia/Kolkata' with your city if you aren't in India
+local_tz = pytz.timezone('Asia/Kolkata') 
+current_time = datetime.now(local_tz).strftime("%I:%M %p")
 
 # --- 1. PAGE CONFIG & MEMORY ---
 st.set_page_config(page_title="Med-Alerts", page_icon="🏥", layout="wide")
